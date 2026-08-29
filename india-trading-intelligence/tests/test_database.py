@@ -111,3 +111,38 @@ def test_insert_and_list_notifications(conn):
 def test_targets_and_event_ids_json_round_trip():
     assert db.targets_to_json([100.0, 200.0]) == "[100.0, 200.0]"
     assert db.event_ids_to_json([1, 2, 3]) == "[1, 2, 3]"
+
+
+def test_heartbeat_missing_returns_none(conn):
+    assert db.get_heartbeat(conn, "NIFTY") is None
+
+
+def test_heartbeat_upsert_and_get(conn):
+    ts = datetime(2024, 1, 1, 9, 15, tzinfo=KOLKATA)
+    db.upsert_heartbeat(conn, "NIFTY", ts, 24000.0, "csv")
+
+    hb = db.get_heartbeat(conn, "NIFTY")
+    assert hb["instrument"] == "NIFTY"
+    assert hb["last_bar_time"] == ts
+    assert hb["last_price"] == 24000.0
+    assert hb["data_source"] == "csv"
+
+
+def test_heartbeat_upsert_overwrites_same_instrument(conn):
+    ts1 = datetime(2024, 1, 1, 9, 15, tzinfo=KOLKATA)
+    ts2 = datetime(2024, 1, 1, 9, 20, tzinfo=KOLKATA)
+    db.upsert_heartbeat(conn, "NIFTY", ts1, 24000.0, "csv")
+    db.upsert_heartbeat(conn, "NIFTY", ts2, 24010.0, "angel_one")
+
+    hb = db.get_heartbeat(conn, "NIFTY")
+    assert hb["last_bar_time"] == ts2
+    assert hb["last_price"] == 24010.0
+    assert hb["data_source"] == "angel_one"
+    assert len(db.list_heartbeats(conn)) == 1
+
+
+def test_heartbeat_tracks_multiple_instruments(conn):
+    ts = datetime(2024, 1, 1, 9, 15, tzinfo=KOLKATA)
+    db.upsert_heartbeat(conn, "NIFTY", ts, 24000.0, "csv")
+    db.upsert_heartbeat(conn, "BANKNIFTY", ts, 51000.0, "csv")
+    assert len(db.list_heartbeats(conn)) == 2

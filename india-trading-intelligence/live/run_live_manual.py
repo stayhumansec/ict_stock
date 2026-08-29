@@ -167,6 +167,9 @@ class LiveRunner:
         self.bars.append(bar)
         result = SMCEngine(self.config).run(self.bars)
 
+        if self.db_conn is not None:
+            database.upsert_heartbeat(self.db_conn, self.instrument, bar.timestamp, bar.close, self.data_source)
+
         new_events = [e for e in result.structure_events if e.event_id not in self.seen_structure_event_ids]
         for event in sorted(new_events, key=lambda e: e.confirmed_index):
             self.seen_structure_event_ids.add(event.event_id)

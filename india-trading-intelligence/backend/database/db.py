@@ -72,6 +72,18 @@ CREATE TABLE IF NOT EXISTS notifications (
     sent_at TEXT NOT NULL,
     error TEXT NOT NULL DEFAULT ''
 );
+
+-- One row per instrument, overwritten on every processed bar (whether or
+-- not it produced an event) - the only honest source for "is the data
+-- feed alive and when did it last tick," since events are sparse by
+-- design ("No Trade" is normal) and can't stand in for feed liveness.
+CREATE TABLE IF NOT EXISTS heartbeat (
+    instrument TEXT PRIMARY KEY,
+    last_bar_time TEXT NOT NULL,
+    last_price REAL NOT NULL,
+    data_source TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -242,3 +254,46 @@ def targets_to_json(targets: List[float]) -> str:
 
 def event_ids_to_json(ids: List[int]) -> str:
     return json.dumps(ids)
+
+
+def upsert_heartbeat(
+    conn: sqlite3.Connection, instrument: str, last_bar_time: datetime, last_price: float, data_source: str
+) -> None:
+    conn.execute(
+        """INSERT INTO heartbeat (instrument, last_bar_time, last_price, data_source, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(instrument) DO UPDATE SET
+               last_bar_time = excluded.last_bar_time,
+               last_price = excluded.last_price,
+               data_source = excluded.data_source,
+               updated_at = excluded.updated_at""",
+        (instrument, last_bar_time.isoformat(), last_price, data_source, datetime.now().isoformat()),
+    )
+    conn.commit()
+
+
+def get_heartbeat(conn: sqlite3.Connection, instrument: str) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM heartbeat WHERE instrument = ?", (instrument,)).fetchone()
+    if row is None:
+        return None
+    return {
+        "instrument": row["instrument"],
+        "last_bar_time": datetime.fromisoformat(row["last_bar_time"]),
+        "last_price": row["last_price"],
+        "data_source": row["data_source"],
+        "updated_at": datetime.fromisoformat(row["updated_at"]),
+    }
+
+
+def list_heartbeats(conn: sqlite3.Connection) -> List[dict]:
+    rows = conn.execute("SELECT * FROM heartbeat").fetchall()
+    return [
+        {
+            "instrument": r["instrument"],
+            "last_bar_time": datetime.fromisoformat(r["last_bar_time"]),
+            "last_price": r["last_price"],
+            "data_source": r["data_source"],
+            "updated_at": datetime.fromisoformat(r["updated_at"]),
+        }
+        for r in rows
+    ]
