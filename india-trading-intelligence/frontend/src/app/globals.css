@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------
+ * Design tokens. Dark is the primary theme (default, no attribute
+ * needed). Light is secondary, opted into via [data-theme="light"] on
+ * <html> (set by the theme toggle + persisted to localStorage).
+ * Every color used anywhere in the app is a token here - no ad-hoc hex
+ * values in components - so state colors stay consistent and meaningful.
+ * ------------------------------------------------------------------- */
+:root {
+  --bg: #0a0d12;
+  --surface: #10141b;
+  --surface-2: #161c26;
+  --border: #232a37;
+  --border-strong: #313b4d;
+
+  --text: #e7ebf2;
+  --text-muted: #8a93a3;
+  --text-faint: #5b6472;
+
+  /* Direction - reserved exclusively for bullish/bearish meaning */
+  --bullish: #2fbf71;
+  --bullish-bg: rgba(47, 191, 113, 0.12);
+  --bearish: #f0475c;
+  --bearish-bg: rgba(240, 71, 92, 0.12);
+
+  /* Signal state colors - distinct from direction colors where the
+     meaning is distinct (waiting vs. confirmed vs. invalidated) */
+  --state-developing: #eab308;
+  --state-developing-bg: rgba(234, 179, 8, 0.12);
+  --state-confirmed: #3b82f6;
+  --state-confirmed-bg: rgba(59, 130, 246, 0.12);
+  --state-active: #2fbf71;
+  --state-active-bg: rgba(47, 191, 113, 0.12);
+  --state-invalidated: #a78bfa;
+  --state-invalidated-bg: rgba(167, 139, 250, 0.12);
+  --state-expired: #6b7280;
+  --state-expired-bg: rgba(107, 114, 128, 0.12);
+
+  --accent: #38bdf8;
+  --accent-bg: rgba(56, 189, 248, 0.12);
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --border: #dde1e7;
+  --border-strong: #c5cbd4;
+
+  --text: #14181f;
+  --text-muted: #545c6b;
+  --text-faint: #8a93a3;
+
+  --bullish: #1a9b57;
+  --bullish-bg: rgba(26, 155, 87, 0.1);
+  --bearish: #d33249;
+  --bearish-bg: rgba(211, 50, 73, 0.1);
+
+  --state-developing: #b8860b;
+  --state-developing-bg: rgba(184, 134, 11, 0.12);
+  --state-confirmed: #2563eb;
+  --state-confirmed-bg: rgba(37, 99, 235, 0.1);
+  --state-active: #1a9b57;
+  --state-active-bg: rgba(26, 155, 87, 0.1);
+  --state-invalidated: #7c3aed;
+  --state-invalidated-bg: rgba(124, 58, 237, 0.1);
+  --state-expired: #6b7280;
+  --state-expired-bg: rgba(107, 114, 128, 0.1);
+
+  --accent: #0284c7;
+  --accent-bg: rgba(2, 132, 199, 0.1);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+
+  --color-bullish: var(--bullish);
+  --color-bullish-bg: var(--bullish-bg);
+  --color-bearish: var(--bearish);
+  --color-bearish-bg: var(--bearish-bg);
+
+  --color-state-developing: var(--state-developing);
+  --color-state-developing-bg: var(--state-developing-bg);
+  --color-state-confirmed: var(--state-confirmed);
+  --color-state-confirmed-bg: var(--state-confirmed-bg);
+  --color-state-active: var(--state-active);
+  --color-state-active-bg: var(--state-active-bg);
+  --color-state-invalidated: var(--state-invalidated);
+  --color-state-invalidated-bg: var(--state-invalidated-bg);
+  --color-state-expired: var(--state-expired);
+  --color-state-expired-bg: var(--state-expired-bg);
+
+  --color-accent: var(--accent);
+  --color-accent-bg: var(--accent-bg);
+
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jbmono);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Tabular figures everywhere numbers appear - the single most important
+   typographic choice for a screen full of aligned price/score columns. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
