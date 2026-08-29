@@ -1,0 +1,38 @@
+services:
+  api:
+    build: .
+    command: uvicorn backend.api.server:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - smc-data:/data
+    environment:
+      - SMC_DB_PATH=/data/smc.db
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+    restart: unless-stopped
+
+  live:
+    build: .
+    command: >
+      python -m live.run_live_manual --live
+      --instrument ${INSTRUMENT:-NIFTY}
+      --exchange ${EXCHANGE:-NSE}
+      --symbol-token ${SYMBOL_TOKEN}
+      --interval ${INTERVAL:-FIVE_MINUTE}
+      --poll-seconds ${POLL_SECONDS:-60}
+      --db /data/smc.db
+    volumes:
+      - smc-data:/data
+    environment:
+      - ANGEL_ONE_API_KEY=${ANGEL_ONE_API_KEY}
+      - ANGEL_ONE_CLIENT_CODE=${ANGEL_ONE_CLIENT_CODE}
+      - ANGEL_ONE_PASSWORD=${ANGEL_ONE_PASSWORD}
+      - ANGEL_ONE_TOTP_SECRET=${ANGEL_ONE_TOTP_SECRET}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    restart: unless-stopped
+    depends_on:
+      - api
+
+volumes:
+  smc-data:

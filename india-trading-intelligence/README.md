@@ -119,6 +119,33 @@ Serves whatever `--db` file the live runner is writing to:
 SMC_DB_PATH=smc.db uvicorn backend.api.server:app --reload
 ```
 
+## Deploying for 24/7 operation
+
+Running `live/run_live_manual.py` by hand only lasts as long as your
+terminal stays open. To keep it (and the API) running continuously on a
+server, use the included Docker setup:
+
+```bash
+cp .env.example .env   # fill in Angel One + Telegram + SYMBOL_TOKEN
+docker compose up -d --build
+```
+
+This starts two containers - `api` (the FastAPI server, port 8000) and
+`live` (the live runner in `--live` mode) - sharing one SQLite volume,
+both with `restart: unless-stopped` so Docker restarts them
+automatically if they crash or the host reboots (as long as Docker
+itself is set to start on boot, which is the default on most Linux
+distros).
+
+This needs to run on a host that's actually on all the time - a cheap
+VPS (DigitalOcean, AWS Lightsail, Oracle Cloud's free tier, etc.), not
+your personal laptop. See the "Angel One SmartAPI" section above for why
+that host's IP matters for the app registration.
+
+Note: this Docker setup has not been build-tested in this repo's CI -
+run `docker compose build` yourself as a first check before relying on
+it.
+
 ## Frontend
 
 ```bash
