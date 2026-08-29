@@ -7,7 +7,9 @@
  */
 
 import { MOCK_MARKET_OVERVIEW, MOCK_SIGNALS, MOCK_SYSTEM_HEALTH } from "./mock-data";
-import type { MarketOverview, Signal, SystemHealth } from "./types";
+import type { MarketOverview, Signal, SignalState, SystemHealth } from "./types";
+
+const TERMINAL_STATES: SignalState[] = ["TARGET_HIT", "STOP_HIT", "INVALIDATED", "EXPIRED"];
 
 export async function getMarketOverview(): Promise<MarketOverview[]> {
   return MOCK_MARKET_OVERVIEW;
@@ -29,4 +31,12 @@ export async function getActiveSignals(): Promise<Signal[]> {
 export async function getSignalById(id: string): Promise<Signal | null> {
   const signals = await getSignals();
   return signals.find((s) => s.id === id) ?? null;
+}
+
+/** Resolved signals for the Journal screen - Release 1 has no trade
+ * persistence yet, so this reflects only what's in the current session's
+ * signal list, not a durable history. */
+export async function getResolvedSignals(): Promise<Signal[]> {
+  const signals = await getSignals();
+  return signals.filter((s) => TERMINAL_STATES.includes(s.state));
 }

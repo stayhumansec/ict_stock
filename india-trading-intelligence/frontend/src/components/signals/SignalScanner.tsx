@@ -31,7 +31,15 @@ function sortSignals(signals: Signal[], key: SortKey, dir: "asc" | "desc"): Sign
   return sorted;
 }
 
-export function SignalScanner({ signals }: { signals: Signal[] }) {
+export function SignalScanner({
+  signals,
+  emptyTitle = "No signals yet",
+  emptyDescription = "No Trade is a valid, normal state.",
+}: {
+  signals: Signal[];
+  emptyTitle?: string;
+  emptyDescription?: string;
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -47,7 +55,7 @@ export function SignalScanner({ signals }: { signals: Signal[] }) {
   }
 
   if (signals.length === 0) {
-    return <EmptyState title="No signals yet" description="No Trade is a valid, normal state." />;
+    return <EmptyState title={emptyTitle} description={emptyDescription} />;
   }
 
   return (
