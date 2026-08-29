@@ -28,7 +28,15 @@ CREATE TABLE IF NOT EXISTS signals (
     stop_loss REAL,
     targets_json TEXT NOT NULL DEFAULT '[]',
     structure_event_ids_json TEXT NOT NULL DEFAULT '[]',
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    score INTEGER,
+    grade TEXT,
+    data_quality TEXT,
+    decision TEXT,
+    reasoning_chain_json TEXT NOT NULL DEFAULT '[]',
+    core_signal_json TEXT NOT NULL DEFAULT '[]',
+    confirmations_json TEXT NOT NULL DEFAULT '[]',
+    conflicts_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -91,6 +99,14 @@ def _row_to_signal(row: sqlite3.Row) -> SignalRecord:
         targets_json=row["targets_json"],
         structure_event_ids_json=row["structure_event_ids_json"],
         notes=row["notes"],
+        score=row["score"],
+        grade=row["grade"],
+        data_quality=row["data_quality"],
+        decision=row["decision"],
+        reasoning_chain_json=row["reasoning_chain_json"],
+        core_signal_json=row["core_signal_json"],
+        confirmations_json=row["confirmations_json"],
+        conflicts_json=row["conflicts_json"],
     )
 
 
@@ -98,8 +114,10 @@ def insert_signal(conn: sqlite3.Connection, record: SignalRecord) -> int:
     cur = conn.execute(
         """INSERT INTO signals
            (instrument, mode, direction, state, created_index, created_at, updated_at,
-            entry, stop_loss, targets_json, structure_event_ids_json, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            entry, stop_loss, targets_json, structure_event_ids_json, notes,
+            score, grade, data_quality, decision, reasoning_chain_json,
+            core_signal_json, confirmations_json, conflicts_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             record.instrument,
             record.mode,
@@ -113,6 +131,14 @@ def insert_signal(conn: sqlite3.Connection, record: SignalRecord) -> int:
             record.targets_json,
             record.structure_event_ids_json,
             record.notes,
+            record.score,
+            record.grade,
+            record.data_quality,
+            record.decision,
+            record.reasoning_chain_json,
+            record.core_signal_json,
+            record.confirmations_json,
+            record.conflicts_json,
         ),
     )
     conn.commit()
@@ -125,17 +151,31 @@ def update_signal_state(
     state: str,
     updated_at: datetime,
     structure_event_ids_json: Optional[str] = None,
+    score: Optional[int] = None,
+    grade: Optional[str] = None,
+    data_quality: Optional[str] = None,
+    decision: Optional[str] = None,
+    reasoning_chain_json: Optional[str] = None,
+    core_signal_json: Optional[str] = None,
+    confirmations_json: Optional[str] = None,
+    conflicts_json: Optional[str] = None,
 ) -> None:
-    if structure_event_ids_json is not None:
-        conn.execute(
-            "UPDATE signals SET state = ?, updated_at = ?, structure_event_ids_json = ? WHERE id = ?",
-            (state, updated_at.isoformat(), structure_event_ids_json, signal_id),
-        )
-    else:
-        conn.execute(
-            "UPDATE signals SET state = ?, updated_at = ? WHERE id = ?",
-            (state, updated_at.isoformat(), signal_id),
-        )
+    fields = {"state": state, "updated_at": updated_at.isoformat()}
+    optional = {
+        "structure_event_ids_json": structure_event_ids_json,
+        "score": score,
+        "grade": grade,
+        "data_quality": data_quality,
+        "decision": decision,
+        "reasoning_chain_json": reasoning_chain_json,
+        "core_signal_json": core_signal_json,
+        "confirmations_json": confirmations_json,
+        "conflicts_json": conflicts_json,
+    }
+    fields.update({k: v for k, v in optional.items() if v is not None})
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE signals SET {set_clause} WHERE id = ?", (*fields.values(), signal_id))
     conn.commit()
 
 

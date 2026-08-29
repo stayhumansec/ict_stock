@@ -32,6 +32,18 @@ class SignalRecord:
     structure_event_ids_json: str = "[]"
     notes: str = ""
 
+    # Confluence summary (backend/signals/reasoning.py) - a transparent,
+    # rule-based composite computed from real detected events, never a
+    # probability. None until at least one CHoCH has confirmed.
+    score: Optional[int] = None
+    grade: Optional[str] = None
+    data_quality: Optional[str] = None
+    decision: Optional[str] = None
+    reasoning_chain_json: str = "[]"
+    core_signal_json: str = "[]"
+    confirmations_json: str = "[]"
+    conflicts_json: str = "[]"
+
 
 @dataclass
 class TradeRecord:

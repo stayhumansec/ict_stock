@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 from dataclasses import dataclass, field
@@ -32,10 +33,11 @@ from backend.notifications.base import NotificationChannel, NotificationResult, 
 from backend.notifications.telegram import TelegramNotifier
 from backend.risk.engine import DailyRiskState, RiskConfig, RiskEngine
 from backend.signals.mode import MethodologyMode
+from backend.signals.reasoning import ConfluenceSummary, build_confluence_summary, refs_to_json
 from backend.signals.signal import Signal, SignalState
 from backend.smc.config import SMCConfig
 from backend.smc.engine import SMCEngine
-from backend.smc.models import Bar, Direction, StructureEventType
+from backend.smc.models import Bar, Direction, EngineResult, StructureEventType
 
 from .data_sources import poll_angel_one_bars, replay_csv_bars
 
@@ -82,6 +84,7 @@ class LiveRunner:
     risk_engine: RiskEngine
     risk_state: DailyRiskState
     db_conn: Optional[sqlite3.Connection] = None
+    data_source: str = "csv"  # "angel_one" or "csv" - drives ConfluenceSummary.data_quality
 
     bars: list = field(default_factory=list)
     seen_structure_event_ids: Set[int] = field(default_factory=set)
@@ -90,7 +93,17 @@ class LiveRunner:
     signals: list = field(default_factory=list)
     _next_signal_id: int = 0
 
-    def _persist_new_signal(self, signal: Signal) -> None:
+    def _build_summary(self, signal: Signal, result: EngineResult, risk_gate_allowed: bool) -> ConfluenceSummary:
+        return build_confluence_summary(
+            result,
+            event_ids=signal.structure_event_ids,
+            direction=signal.direction,
+            state_is_confirmed=(signal.state == SignalState.CONFIRMED),
+            risk_gate_allowed=risk_gate_allowed,
+            data_source=self.data_source,
+        )
+
+    def _persist_new_signal(self, signal: Signal, summary: ConfluenceSummary) -> None:
         if self.db_conn is None:
             return
         record = SignalRecord(
@@ -104,10 +117,18 @@ class LiveRunner:
             updated_at=signal.created_at,
             targets_json=database.targets_to_json(signal.targets),
             structure_event_ids_json=database.event_ids_to_json(signal.structure_event_ids),
+            score=summary.score,
+            grade=summary.grade,
+            data_quality=summary.data_quality,
+            decision=summary.decision,
+            reasoning_chain_json=json.dumps(summary.reasoning_chain),
+            core_signal_json=refs_to_json(summary.core_signal),
+            confirmations_json=refs_to_json(summary.confirmations),
+            conflicts_json=refs_to_json(summary.conflicts),
         )
         signal.record_id = database.insert_signal(self.db_conn, record)
 
-    def _persist_signal_update(self, signal: Signal) -> None:
+    def _persist_signal_update(self, signal: Signal, summary: ConfluenceSummary) -> None:
         if self.db_conn is None or signal.record_id is None:
             return
         database.update_signal_state(
@@ -116,6 +137,14 @@ class LiveRunner:
             signal.state.value,
             datetime.now(),
             structure_event_ids_json=database.event_ids_to_json(signal.structure_event_ids),
+            score=summary.score,
+            grade=summary.grade,
+            data_quality=summary.data_quality,
+            decision=summary.decision,
+            reasoning_chain_json=json.dumps(summary.reasoning_chain),
+            core_signal_json=refs_to_json(summary.core_signal),
+            confirmations_json=refs_to_json(summary.confirmations),
+            conflicts_json=refs_to_json(summary.conflicts),
         )
 
     def _notify(self, message: str, severity: Severity, signal: Optional[Signal] = None) -> None:
@@ -141,7 +170,7 @@ class LiveRunner:
         new_events = [e for e in result.structure_events if e.event_id not in self.seen_structure_event_ids]
         for event in sorted(new_events, key=lambda e: e.confirmed_index):
             self.seen_structure_event_ids.add(event.event_id)
-            self._handle_structure_event(event, bar)
+            self._handle_structure_event(event, bar, result)
 
         new_sweeps = [s for s in result.liquidity_sweeps if s.sweep_id not in self.seen_sweep_ids]
         for sweep in new_sweeps:
@@ -153,7 +182,7 @@ class LiveRunner:
                     Severity.INFO,
                 )
 
-    def _handle_structure_event(self, event, bar: Bar) -> None:
+    def _handle_structure_event(self, event, bar: Bar, result: EngineResult) -> None:
         if event.event_type == StructureEventType.CHOCH:
             signal = Signal(
                 signal_id=self._next_signal_id,
@@ -167,7 +196,8 @@ class LiveRunner:
             self._next_signal_id += 1
             self.signal_by_event_id[event.event_id] = signal
             self.signals.append(signal)
-            self._persist_new_signal(signal)
+            summary = self._build_summary(signal, result, risk_gate_allowed=True)
+            self._persist_new_signal(signal, summary)
             self._notify(
                 f"{self.instrument}: {_direction_word(event.direction)} CHoCH at {event.reference_price:.2f} "
                 f"- developing reversal candidate.",
@@ -182,9 +212,11 @@ class LiveRunner:
             signal.transition(SignalState.CONFIRMED, at_index=bar.index, reason="MSS confirmed")
             signal.structure_event_ids.append(event.event_id)
             self.signal_by_event_id[event.event_id] = signal
-            self._persist_signal_update(signal)
 
             decision = self.risk_engine.check_daily_gate(self.risk_state)
+            summary = self._build_summary(signal, result, risk_gate_allowed=decision.allowed)
+            self._persist_signal_update(signal, summary)
+
             if decision.allowed:
                 self._notify(
                     f"{self.instrument}: {_direction_word(event.direction)} MSS confirmed at "
@@ -207,7 +239,9 @@ class LiveRunner:
             if signal is None or signal.is_terminal():
                 return
             signal.transition(SignalState.INVALIDATED, at_index=bar.index, reason="CHoCH failed")
-            self._persist_signal_update(signal)
+            signal.structure_event_ids.append(event.event_id)
+            summary = self._build_summary(signal, result, risk_gate_allowed=False)
+            self._persist_signal_update(signal, summary)
             self._notify(
                 f"{self.instrument}: CHoCH at {event.reference_price:.2f} failed - setup invalidated.",
                 Severity.WARNING,
@@ -219,7 +253,9 @@ class LiveRunner:
             if signal is None or signal.is_terminal():
                 return
             signal.transition(SignalState.INVALIDATED, at_index=bar.index, reason="MSS failed")
-            self._persist_signal_update(signal)
+            signal.structure_event_ids.append(event.event_id)
+            summary = self._build_summary(signal, result, risk_gate_allowed=False)
+            self._persist_signal_update(signal, summary)
             self._notify(
                 f"{self.instrument}: MSS at {event.reference_price:.2f} failed - price closed back through "
                 f"the confirmation level. Setup invalidated.",
@@ -324,6 +360,7 @@ def main(argv: Optional[list] = None) -> int:
         risk_engine=risk_engine,
         risk_state=risk_state,
         db_conn=db_conn,
+        data_source="angel_one" if args.live else "csv",
     )
 
     try:
