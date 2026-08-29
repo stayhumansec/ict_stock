@@ -21,14 +21,24 @@ for the full spec this was built against.
   unconditionally refuses to run.
 - `backend/market_data/`, `backend/ict/`, `backend/derivatives/`,
   `backend/cas/` — schemas and stubs for out-of-scope-for-now engines.
+- `backend/database/` — a SQLite persistence layer (signals, trades,
+  orders, notifications, and a per-instrument heartbeat), no ORM.
+- `backend/signals/reasoning.py` — a transparent, rule-based confluence
+  summary (score/grade/reasoning chain/core signal/confirmations/
+  conflicts) derived entirely from real detected events. Never a
+  probability, never fabricated.
+- `backend/api/server.py` — a read-only FastAPI layer over the database
+  that the frontend consumes for real signal/journal/system-health data.
 - `backtest/` — a synthetic data generator and a backtest runner that
   prints a full event log and saves an annotated candlestick chart.
 - `live/run_live_manual.py` — wires market data → the SMC engine →
-  signals → Telegram into one runnable pipeline, either replaying a CSV
-  or polling Angel One live.
+  signals → persistence → Telegram into one runnable pipeline, either
+  replaying a CSV or polling Angel One live.
 - `frontend/` — a Next.js dashboard (Dashboard, Signal Feed, Setup
-  Detail, Journal, Settings) built against a mock data layer, ready to
-  swap onto a real API later.
+  Detail, Journal, Settings) that fetches real signals/journal/system-
+  health from `backend/api/server.py`, falling back to mock data if the
+  API is unreachable. Market overview stays mocked always - there is no
+  market-regime/session classifier in this project.
 
 ## Setup
 
@@ -81,24 +91,33 @@ historical-candle or LTP data in anything important.
 
 ## Running the live pipeline
 
-CSV replay (safe, no broker/network needed):
+CSV replay (safe, no broker/network needed), persisting to SQLite:
 
 ```bash
-python3 -m live.run_live_manual --csv path/to/bars.csv --instrument NIFTY
+python3 -m live.run_live_manual --csv path/to/bars.csv --instrument NIFTY --db smc.db
 ```
 
-CSV columns: `timestamp,open,high,low,close,volume`.
+CSV columns: `timestamp,open,high,low,close,volume`. Omit `--db` to run
+without persistence.
 
 Live, against Angel One (requires the env vars above, plus the
 instrument's numeric symbol token):
 
 ```bash
 python3 -m live.run_live_manual --live --instrument NIFTY \
-    --exchange NSE --symbol-token <token> --interval FIVE_MINUTE
+    --exchange NSE --symbol-token <token> --interval FIVE_MINUTE --db smc.db
 ```
 
 This never places an order. It prints to the console and, if Telegram
 is configured, sends the same alerts there.
+
+## API server
+
+Serves whatever `--db` file the live runner is writing to:
+
+```bash
+SMC_DB_PATH=smc.db uvicorn backend.api.server:app --reload
+```
 
 ## Frontend
 
@@ -108,9 +127,10 @@ npm install
 npm run dev
 ```
 
-Runs against a mock data layer (`frontend/src/lib/mock-data.ts`) — swap
-`frontend/src/lib/data-source.ts`'s function bodies for real API calls
-once one exists.
+Set `API_BASE_URL` (default `http://localhost:8000`) to point it at the
+API server above. Falls back to the mock data layer
+(`frontend/src/lib/mock-data.ts`) automatically if the API is
+unreachable, so the UI is still demoable standalone.
 
 ## Non-negotiable principles (see `BUILD_SPEC.md` for the full list)
 

@@ -5,8 +5,24 @@ import { cn } from "@/lib/cn";
  * Deliberately NOT styled or labeled as a probability/confidence percent
  * — see BUILD_SPEC.md principle #6. The bar is a visual summary of the
  * same structured number, nothing more.
+ *
+ * score/grade are nullable because a signal can in principle exist with
+ * no confluence summary computed yet - shown as "—", never a fabricated
+ * placeholder score.
  */
-export function ScoreDisplay({ score, grade, className }: { score: number; grade: "A" | "B" | "C"; className?: string }) {
+export function ScoreDisplay({
+  score,
+  grade,
+  className,
+}: {
+  score: number | null;
+  grade: "A" | "B" | "C" | null;
+  className?: string;
+}) {
+  if (score === null || grade === null) {
+    return <span className={cn("font-mono text-xs text-text-faint tabular", className)}>—</span>;
+  }
+
   const gradeColor = grade === "A" ? "text-bullish" : grade === "B" ? "text-state-confirmed" : "text-text-muted";
 
   return (

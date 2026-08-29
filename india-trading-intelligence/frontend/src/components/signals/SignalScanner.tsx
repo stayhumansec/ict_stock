@@ -23,7 +23,7 @@ function sortSignals(signals: Signal[], key: SortKey, dir: "asc" | "desc"): Sign
   const sorted = [...signals].sort((a, b) => {
     let cmp = 0;
     if (key === "updatedAt") cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-    if (key === "score") cmp = a.score - b.score;
+    if (key === "score") cmp = (a.score ?? -Infinity) - (b.score ?? -Infinity);
     if (key === "riskReward") cmp = (a.riskReward ?? -Infinity) - (b.riskReward ?? -Infinity);
     if (key === "state") cmp = a.state.localeCompare(b.state);
     return dir === "asc" ? cmp : -cmp;

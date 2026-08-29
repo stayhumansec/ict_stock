@@ -66,15 +66,20 @@ export interface Signal {
   direction: Direction;
   methodology: MethodologyMode;
   state: SignalState;
-  /** Structured composite score (0-100). Never a win-probability. */
-  score: number;
-  grade: "A" | "B" | "C";
+  /** Structured composite score (0-100). Never a win-probability. Null
+   * only in the unlikely case a signal exists with no confluence summary
+   * computed yet (shouldn't happen past CHoCH, but the real API can send
+   * it and the UI must not crash if it does). */
+  score: number | null;
+  grade: "A" | "B" | "C" | null;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 
   entry: number | null;
   stopLoss: number | null;
   targets: number[];
+  /** Always null in Release 1 - no entry/stop/target sizing algorithm is
+   * in scope, so this is never computed rather than fabricated. */
   riskReward: number | null;
 
   /** The core structural event(s) that triggered this signal. */
@@ -88,10 +93,14 @@ export interface Signal {
    * ["Sell-side liquidity swept below prior day low", "Bullish MSS confirmed", "Displacement", "FVG retest"] */
   reasoningChain: string[];
 
-  dataQuality: DataQuality;
-  decision: Decision;
+  dataQuality: DataQuality | null;
+  decision: Decision | null;
 }
 
+/** Always mock in every mode, including against the real API - the
+ * backend has no market-regime or trading-session classifier (out of
+ * BUILD_SPEC.md's scope), so there is no real source for this yet.
+ * See lib/data-source.ts. */
 export interface MarketOverview {
   instrument: Instrument;
   lastPrice: number;

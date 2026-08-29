@@ -20,7 +20,23 @@ const CONFIG: Record<Decision, { label: string; description: string; className: 
  * end to end. This banner states what the system concluded; the decision
  * itself always belongs to the trader.
  */
-export function DecisionBanner({ decision }: { decision: Decision }) {
+export function DecisionBanner({ decision }: { decision: Decision | null }) {
+  // Never default an unknown decision to MANUAL_ENTRY - treat it as
+  // needing review, same posture as an explicit REVIEW, just with
+  // honest wording that nothing has been evaluated yet.
+  if (decision === null) {
+    return (
+      <div className="rounded-lg border border-border bg-surface-2 p-4">
+        <span className="text-sm font-bold uppercase tracking-wide text-text-muted">Not Yet Evaluated</span>
+        <p className="mt-1 text-sm text-text">This setup has no confluence summary yet.</p>
+        <p className="mt-2 text-xs text-text-muted">
+          This platform never places or times orders automatically. Entry, sizing, and timing are your decision to
+          make manually.
+        </p>
+      </div>
+    );
+  }
+
   const config = CONFIG[decision];
   return (
     <div className={cn("rounded-lg border p-4", config.className)}>
