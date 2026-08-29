@@ -78,6 +78,12 @@ class Signal:
     notes: str = ""
     history: List[SignalStateChange] = field(default_factory=list)
 
+    # Set by a persistence layer (e.g. live/run_live_manual.py) once this
+    # signal has been written to the database - the row id to update on
+    # subsequent transitions. None if persistence isn't wired up (e.g.
+    # unit tests, or a run with no --db given).
+    record_id: Optional[int] = None
+
     def transition(self, to_state: SignalState, at_index: int, reason: str = "") -> None:
         if self.state in TERMINAL_STATES:
             raise ValueError(f"Signal {self.signal_id} is in terminal state {self.state}, cannot transition further")

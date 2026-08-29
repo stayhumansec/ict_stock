@@ -19,12 +19,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Dict, Iterator, Optional, Set
 
 from backend.brokers.angel_one import AngelOneAuthError, AngelOneBroker
+from backend.database import db as database
+from backend.database.models import NotificationRecord, SignalRecord
 from backend.notifications.base import NotificationChannel, NotificationResult, Severity
 from backend.notifications.telegram import TelegramNotifier
 from backend.risk.engine import DailyRiskState, RiskConfig, RiskEngine
@@ -78,6 +81,7 @@ class LiveRunner:
     notifier: NotificationChannel
     risk_engine: RiskEngine
     risk_state: DailyRiskState
+    db_conn: Optional[sqlite3.Connection] = None
 
     bars: list = field(default_factory=list)
     seen_structure_event_ids: Set[int] = field(default_factory=set)
@@ -85,6 +89,50 @@ class LiveRunner:
     signal_by_event_id: Dict[int, Signal] = field(default_factory=dict)
     signals: list = field(default_factory=list)
     _next_signal_id: int = 0
+
+    def _persist_new_signal(self, signal: Signal) -> None:
+        if self.db_conn is None:
+            return
+        record = SignalRecord(
+            id=None,
+            instrument=signal.instrument,
+            mode=signal.mode.value,
+            direction=signal.direction.value,
+            state=signal.state.value,
+            created_index=signal.created_index,
+            created_at=signal.created_at,
+            updated_at=signal.created_at,
+            targets_json=database.targets_to_json(signal.targets),
+            structure_event_ids_json=database.event_ids_to_json(signal.structure_event_ids),
+        )
+        signal.record_id = database.insert_signal(self.db_conn, record)
+
+    def _persist_signal_update(self, signal: Signal) -> None:
+        if self.db_conn is None or signal.record_id is None:
+            return
+        database.update_signal_state(
+            self.db_conn,
+            signal.record_id,
+            signal.state.value,
+            datetime.now(),
+            structure_event_ids_json=database.event_ids_to_json(signal.structure_event_ids),
+        )
+
+    def _notify(self, message: str, severity: Severity, signal: Optional[Signal] = None) -> None:
+        result = self.notifier.send(message, severity)
+        if self.db_conn is None:
+            return
+        record = NotificationRecord(
+            id=None,
+            signal_id=signal.record_id if signal else None,
+            channel="app",
+            severity=severity.value,
+            message=message,
+            success=result.success,
+            sent_at=result.sent_at,
+            error=result.error,
+        )
+        database.insert_notification(self.db_conn, record)
 
     def process_bar(self, bar: Bar) -> None:
         self.bars.append(bar)
@@ -99,7 +147,7 @@ class LiveRunner:
         for sweep in new_sweeps:
             self.seen_sweep_ids.add(sweep.sweep_id)
             if sweep.follow_through.value == "CONFIRMED_REVERSAL":
-                self.notifier.send(
+                self._notify(
                     f"{self.instrument}: {sweep.pool_type.value} liquidity swept with rejection "
                     f"(price {sweep.swept_price:.2f}) - potential {_direction_word(sweep.direction)} reversal context.",
                     Severity.INFO,
@@ -119,10 +167,12 @@ class LiveRunner:
             self._next_signal_id += 1
             self.signal_by_event_id[event.event_id] = signal
             self.signals.append(signal)
-            self.notifier.send(
+            self._persist_new_signal(signal)
+            self._notify(
                 f"{self.instrument}: {_direction_word(event.direction)} CHoCH at {event.reference_price:.2f} "
                 f"- developing reversal candidate.",
                 Severity.SETUP,
+                signal=signal,
             )
 
         elif event.event_type == StructureEventType.MSS:
@@ -132,21 +182,24 @@ class LiveRunner:
             signal.transition(SignalState.CONFIRMED, at_index=bar.index, reason="MSS confirmed")
             signal.structure_event_ids.append(event.event_id)
             self.signal_by_event_id[event.event_id] = signal
+            self._persist_signal_update(signal)
 
             decision = self.risk_engine.check_daily_gate(self.risk_state)
             if decision.allowed:
-                self.notifier.send(
+                self._notify(
                     f"{self.instrument}: {_direction_word(event.direction)} MSS confirmed at "
                     f"{event.reference_price:.2f}. Structure setup confirmed - entry/stop/target sizing is not "
                     f"computed by this release; review manually. REVIEW / MANUAL ENTRY.",
                     Severity.ACTIONABLE,
+                    signal=signal,
                 )
             else:
-                self.notifier.send(
+                self._notify(
                     f"{self.instrument}: {_direction_word(event.direction)} MSS confirmed at "
                     f"{event.reference_price:.2f}, but the daily risk gate is blocking new entries today "
                     f"({'; '.join(decision.reasons)}). For awareness only - no action suggested.",
                     Severity.WARNING,
+                    signal=signal,
                 )
 
         elif event.event_type == StructureEventType.CHOCH_FAILED:
@@ -154,9 +207,11 @@ class LiveRunner:
             if signal is None or signal.is_terminal():
                 return
             signal.transition(SignalState.INVALIDATED, at_index=bar.index, reason="CHoCH failed")
-            self.notifier.send(
+            self._persist_signal_update(signal)
+            self._notify(
                 f"{self.instrument}: CHoCH at {event.reference_price:.2f} failed - setup invalidated.",
                 Severity.WARNING,
+                signal=signal,
             )
 
         elif event.event_type == StructureEventType.MSS_FAILED:
@@ -164,10 +219,12 @@ class LiveRunner:
             if signal is None or signal.is_terminal():
                 return
             signal.transition(SignalState.INVALIDATED, at_index=bar.index, reason="MSS failed")
-            self.notifier.send(
+            self._persist_signal_update(signal)
+            self._notify(
                 f"{self.instrument}: MSS at {event.reference_price:.2f} failed - price closed back through "
                 f"the confirmation level. Setup invalidated.",
                 Severity.WARNING,
+                signal=signal,
             )
 
         # BOS is intentionally not notified here - it's continuation
@@ -223,6 +280,13 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser.add_argument("--max-daily-loss-pct", type=float, default=2.0)
     parser.add_argument("--max-trades-per-day", type=int, default=5)
 
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="Path to a SQLite file to persist signals/notifications to (e.g. smc.db). "
+        "Omit to run without persistence, same as before this flag existed.",
+    )
+
     args = parser.parse_args(argv)
     if args.live and not args.symbol_token:
         parser.error("--live requires --symbol-token")
@@ -239,13 +303,19 @@ def main(argv: Optional[list] = None) -> int:
         max_trades_per_day=args.max_trades_per_day,
     )
     risk_engine = RiskEngine(risk_config)
-    # Release 1 has no trade/outcome persistence, so realized_pnl_today and
-    # trades_taken_today can never be honestly tracked here - they stay at
-    # zero for the life of the process. The risk gate is wired in for real
-    # (see LiveRunner._handle_structure_event) but will only ever trigger
-    # on max_trades/max_positions if you were to update this state
-    # manually; it never fabricates a loss that didn't happen.
+    # Signals and notifications are now persisted when --db is given (see
+    # LiveRunner._persist_new_signal / _persist_signal_update), but
+    # realized_pnl_today and trades_taken_today still can't be honestly
+    # tracked here - Release 1 has no fill/execution feedback from manual
+    # trades, so they stay at zero for the life of the process. The risk
+    # gate is wired in for real but will only ever trigger on
+    # max_trades/max_positions if you update this state manually; it
+    # never fabricates a loss that didn't happen.
     risk_state = DailyRiskState(trading_day=date.today(), starting_equity=args.account_equity)
+
+    db_conn = database.connect(args.db) if args.db else None
+    if db_conn:
+        print(f"[startup] Persisting signals/notifications to {args.db}")
 
     runner = LiveRunner(
         instrument=args.instrument,
@@ -253,6 +323,7 @@ def main(argv: Optional[list] = None) -> int:
         notifier=notifier,
         risk_engine=risk_engine,
         risk_state=risk_state,
+        db_conn=db_conn,
     )
 
     try:
@@ -268,6 +339,9 @@ def main(argv: Optional[list] = None) -> int:
             bar_count += 1
     except KeyboardInterrupt:
         print("\n[shutdown] Interrupted by user.")
+    finally:
+        if db_conn:
+            db_conn.close()
 
     print(f"\n[summary] Processed {bar_count} bars, created {len(runner.signals)} signal(s).")
     for s in runner.signals:

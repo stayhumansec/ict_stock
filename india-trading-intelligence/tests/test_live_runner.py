@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from backend.database import db as database
 from backend.notifications.base import NotificationChannel, NotificationResult, Severity
 from backend.risk.engine import DailyRiskState, RiskConfig, RiskEngine
 from backend.signals.signal import SignalState
@@ -56,7 +57,7 @@ _BULLISH_BASE = [
 ]
 
 
-def make_runner(risk_config=None, starting_equity=0.0):
+def make_runner(risk_config=None, starting_equity=0.0, db_conn=None):
     notifier = RecordingNotifier()
     risk_engine = RiskEngine(risk_config or RiskConfig())
     risk_state = DailyRiskState(trading_day=date.today(), starting_equity=starting_equity)
@@ -66,6 +67,7 @@ def make_runner(risk_config=None, starting_equity=0.0):
         notifier=notifier,
         risk_engine=risk_engine,
         risk_state=risk_state,
+        db_conn=db_conn,
     )
     return runner, notifier
 
@@ -228,3 +230,42 @@ def test_dual_notifier_succeeds_if_any_channel_configured():
     result = dual.send("hi", Severity.INFO)
     assert result.success is True
     assert working.sent == [(Severity.INFO, "hi")]
+
+
+def test_persists_signal_and_notifications_when_db_given():
+    conn = database.connect(":memory:")
+    runner, notifier = make_runner(db_conn=conn)
+
+    values = _BULLISH_BASE + [
+        (96, 97, 80, 85),   # bar 13: CHoCH bearish
+        (85, 86, 83, 84),   # bar 14
+        (84, 85, 40, 45),   # bar 15: MSS confirms
+    ]
+    for bar in make_bars(values):
+        runner.process_bar(bar)
+
+    assert len(runner.signals) == 1
+    signal = runner.signals[0]
+    assert signal.record_id is not None
+
+    stored = database.get_signal(conn, signal.record_id)
+    assert stored is not None
+    assert stored.instrument == "NIFTY"
+    assert stored.state == "CONFIRMED"
+
+    notifs = database.list_notifications(conn, signal_id=signal.record_id)
+    assert len(notifs) == 2  # SETUP on CHoCH, ACTIONABLE on MSS
+    severities = {n.severity for n in notifs}
+    assert severities == {"SETUP", "ACTIONABLE"}
+    conn.close()
+
+
+def test_runs_fine_without_db_given():
+    # db_conn=None (the default) must not raise anywhere in the persist
+    # helpers - this is the "no --db flag" path exercised by every other
+    # test in this file, asserted explicitly here for clarity.
+    runner, notifier = make_runner()
+    values = _BULLISH_BASE + [(96, 97, 80, 85)]
+    for bar in make_bars(values):
+        runner.process_bar(bar)
+    assert runner.signals[0].record_id is None
